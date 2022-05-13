@@ -19,8 +19,6 @@
 # <pep8 compliant>
 
 # ----------------------------------------------------------------------------
-import csv
-from ctypes.wintypes import SMALL_RECT
 import struct
 import ctypes
 import bpy

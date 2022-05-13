@@ -95,8 +95,18 @@ def load(context, filepath):
                 chunk_mac(data, idx, name)
             elif magic == CPJ_GEO_MAGIC and version == CPJ_GEO_VERSION:
                 chunk_geo(data, idx, name)
+            elif magic == CPJ_SRF_MAGIC and version == CPJ_SRF_VERSION:
+                chunk_srf(data, idx, name)
+            elif magic == CPJ_LOD_MAGIC and version == CPJ_LOD_VERSION:
+                chunk_lod(data, idx, name)
+            elif magic == CPJ_SKL_MAGIC and version == CPJ_SKL_VERSION:
+                chunk_skl(data, idx, name)
+            elif magic == CPJ_FRM_MAGIC and version == CPJ_FRM_VERSION:
+                chunk_frm(data, idx, name)
+            elif magic == CPJ_SEQ_MAGIC and version == CPJ_SEQ_VERSION:
+                chunk_seq(data, idx, name)
             else:
-                print("Unsupported %s v%d chunk" % (magic, version))
+                raise ImportError("Unsupported %s v%d chunk" % (magic, version))
 
             # seek to next chunk (16 bit aligned)
             idx += SCpjChunkHeader[1] + (SCpjChunkHeader[1] % 2) + 8
@@ -114,6 +124,7 @@ def chunk_mac(data, idx, name):
     # unsigned long ofsCommands; // offset of command strings in data block
     SMacFile = struct.unpack_from("IIII", data, idx + 20)
 
+    print("- '%s'" % name)
     print("- %d Sections" % SMacFile[0])
     print("- %d Commands" % SMacFile[2])
 
@@ -164,6 +175,7 @@ def chunk_geo(data, idx, name):
     # unsigned long ofsObjLinks; // number of object links in data
     SGeoFile = struct.unpack_from("IIIIIIIIII", data, idx + 20)
 
+    print("- '%s'" % name)
     print("- %d Vertices" % SGeoFile[0])
     print("- %d Edges" % SGeoFile[2])
     print("- %d Tris" % SGeoFile[4])
@@ -232,5 +244,41 @@ def chunk_geo(data, idx, name):
     obj = bpy.data.objects.new(name, mesh_data)
     scene = bpy.context.scene
     scene.collection.objects.link(obj)
+
+
+# ----------------------------------------------------------------------------
+def chunk_srf(data, idx, name):
+    print("Surface Chunk (SRF)")
+    print("- '%s'" % name)
+    print("! unsupported")
+
+
+# ----------------------------------------------------------------------------
+def chunk_lod(data, idx, name):
+    print("Level Of Detail Chunk (LOD)")
+    print("- '%s'" % name)
+    print("! unsupported")
+
+
+# ----------------------------------------------------------------------------
+def chunk_skl(data, idx, name):
+    print("Skeleton Chunk (SKL)")
+    print("- '%s'" % name)
+    print("! unsupported")
+
+
+# ----------------------------------------------------------------------------
+def chunk_frm(data, idx, name):
+    print("Vertex Frames Chunk (FRM)")
+    print("- '%s'" % name)
+    print("! unsupported")
+
+
+# ----------------------------------------------------------------------------
+def chunk_seq(data, idx, name):
+    print("Sequenced Animation Chunk (SEQ)")
+    print("- '%s'" % name)
+    print("! unsupported")
+
 
 # EoF

@@ -19,6 +19,8 @@
 # <pep8 compliant>
 
 # ----------------------------------------------------------------------------
+import csv
+from ctypes.wintypes import SMALL_RECT
 import struct
 import ctypes
 import bpy
@@ -90,10 +92,10 @@ def load(context, filepath):
             else:
                 name = "nameless"
 
-            print(name)
-
             # delegate
-            if magic == CPJ_GEO_MAGIC and version == CPJ_GEO_VERSION:
+            if magic == CPJ_MAC_MAGIC and version == CPJ_MAC_VERSION:
+                chunk_mac(data, idx, name)
+            elif magic == CPJ_GEO_MAGIC and version == CPJ_GEO_VERSION:
                 chunk_geo(data, idx, name)
             else:
                 print("Unsupported %s v%d chunk" % (magic, version))
@@ -105,8 +107,52 @@ def load(context, filepath):
 
 
 # ----------------------------------------------------------------------------
+def chunk_mac(data, idx, name):
+    print("Cannibal Model Actor Configuration Chunk (MAC)")
+
+    # unsigned long numSections; // number of sections
+    # unsigned long ofsSections; // offset of sections in data block
+    # unsigned long numCommands; // number of commands
+    # unsigned long ofsCommands; // offset of command strings in data block
+    SMacFile = struct.unpack_from("IIII", data, idx + 20)
+
+    print("- %d Sections" % SMacFile[0])
+    print("- %d Commands" % SMacFile[2])
+
+    # offset
+    block = idx + 20 + 16
+
+    # read sections
+    shift = block + SMacFile[1]
+    for i in range(SMacFile[0]):
+
+        # unsigned long ofsName // offset of section name string in data block
+        # unsigned long numCommands // number of command strings in section
+        # unsigned long firstCommand // first command string index
+        SMacSection = struct.unpack_from("III", data, shift)
+
+        section = ctypes.create_string_buffer(
+            data[block + SMacSection[0]:]).value.decode()
+
+        # read comments
+        count = SMacSection[1]
+        for j in range(count):
+
+            ofs = struct.unpack_from("I", data,
+                                     block + SMacFile[3] + (SMacSection[2] + j) * 4)[0]
+            command = ctypes.create_string_buffer(
+                data[block + ofs:]).value.decode()
+
+            print("+ #%d %s %d/%d : %s" %
+                  (i + 1, section, j + 1, count, command))
+
+        # next section
+        shift += 12
+
+
+# ----------------------------------------------------------------------------
 def chunk_geo(data, idx, name):
-    print("Geometry Chunk(GEO)")
+    print("Geometry Chunk (GEO)")
 
     # unsigned long numVertices; // number of vertices
     # unsigned long ofsVertices; // offset of vertices in data block
@@ -119,8 +165,6 @@ def chunk_geo(data, idx, name):
     # unsigned long numObjLinks; // number of object links
     # unsigned long ofsObjLinks; // number of object links in data
     SGeoFile = struct.unpack_from("IIIIIIIIII", data, idx + 20)
-
-    print(SGeoFile)  # FIXME
 
     print("- %d Vertices" % SGeoFile[0])
     print("- %d Edges" % SGeoFile[2])

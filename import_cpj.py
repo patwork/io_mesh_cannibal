@@ -21,7 +21,10 @@
 # ----------------------------------------------------------------------------
 import struct
 import ctypes
+import colorsys
+import random
 import bpy
+import bmesh
 
 
 # ----------------------------------------------------------------------------
@@ -66,6 +69,10 @@ def load(context, filepath):
         if SCpjFileHeader[1] != len(data) - 8:
             raise ImportError("File has wrong size, propably corrupted")
 
+        # compatibility flags
+        bl_object = None
+        has_surface_already = False
+
         # skip file header
         idx = 12
 
@@ -94,9 +101,18 @@ def load(context, filepath):
             if magic == CPJ_MAC_MAGIC and version == CPJ_MAC_VERSION:
                 chunk_mac(data, idx, name)
             elif magic == CPJ_GEO_MAGIC and version == CPJ_GEO_VERSION:
-                chunk_geo(data, idx, name)
+                if bl_object:
+                    print("! multiple GEO blocks are not supported")
+                else:
+                    bl_object = chunk_geo(data, idx, name)
             elif magic == CPJ_SRF_MAGIC and version == CPJ_SRF_VERSION:
-                chunk_srf(data, idx, name)
+                if has_surface_already:
+                    print("! multiple SRF blocks are not supported")
+                elif not bl_object:
+                    print("! cannot import SRF without GEO")
+                else:
+                    chunk_srf(data, idx, name, bl_object)
+                    has_surface_already = True
             elif magic == CPJ_LOD_MAGIC and version == CPJ_LOD_VERSION:
                 chunk_lod(data, idx, name)
             elif magic == CPJ_SKL_MAGIC and version == CPJ_SKL_VERSION:
@@ -106,7 +122,8 @@ def load(context, filepath):
             elif magic == CPJ_SEQ_MAGIC and version == CPJ_SEQ_VERSION:
                 chunk_seq(data, idx, name)
             else:
-                raise ImportError("Unsupported %s v%d chunk" % (magic, version))
+                raise ImportError("Unsupported %s v%d chunk" %
+                                  (magic, version))
 
             # seek to next chunk (16 bit aligned)
             idx += SCpjChunkHeader[1] + (SCpjChunkHeader[1] % 2) + 8
@@ -143,7 +160,7 @@ def chunk_mac(data, idx, name):
         section = ctypes.create_string_buffer(
             data[block + SMacSection[0]:]).value.decode()
 
-        # read comments
+        # read commands
         count = SMacSection[1]
         for j in range(count):
 
@@ -200,7 +217,7 @@ def chunk_geo(data, idx, name):
         # CPJVECTOR refPosition; // reference position of vertex
         SGeoVert = struct.unpack_from("BBHHHIIfff", data, shift)
 
-        cpj_verts.append((SGeoVert[7], SGeoVert[9], SGeoVert[8]))
+        cpj_verts.append((SGeoVert[7], SGeoVert[9], SGeoVert[8]))  # X Z Y
         shift += 28
 
     # read all edges
@@ -245,12 +262,112 @@ def chunk_geo(data, idx, name):
     scene = bpy.context.scene
     scene.collection.objects.link(obj)
 
+    return obj
+
 
 # ----------------------------------------------------------------------------
-def chunk_srf(data, idx, name):
+def chunk_srf(data, idx, name, bl_object):
     print("Surface Chunk (SRF)")
+
+    # unsigned long numTextures; // number of textures
+    # unsigned long ofsTextures; // offset of textures in data block
+    # unsigned long numTris; // number of triangles
+    # unsigned long ofsTris; // offset of triangles in data block
+    # unsigned long numUV; // number of UV texture coordinates
+    # unsigned long ofsUV; // offset of UV texture coordinates in data block
+    SSrfFile = struct.unpack_from("IIIIII", data, idx + 20)
+
     print("- '%s'" % name)
-    print("! unsupported")
+    print("- %d numTextures" % SSrfFile[0])
+    print("- %d numTris" % SSrfFile[2])
+    print("- %d numUV" % SSrfFile[4])
+
+    # create new empty UV layer
+    bl_uv_layer = bl_object.data.uv_layers.new(name=name, do_init=False)
+
+    # init bmesh with object mesh
+    bm = bmesh.new()
+    bm.from_mesh(bl_object.data)
+    bm.faces.ensure_lookup_table()
+    uv = bm.loops.layers.uv[0]
+
+    # check consistency
+    if SSrfFile[2] != len(bm.faces):
+        raise ImportError("Different number of mesh faces in GEO and SRF")
+
+    # offset
+    block = idx + 20 + 24
+
+    # read textures
+    shift = block + SSrfFile[1]
+    for i in range(SSrfFile[0]):
+
+        # unsigned long ofsName; // offset of texture name string in data block
+        # unsigned long ofsRefName; // offset of optional reference name in block
+        SSrfTex = struct.unpack_from("II", data, shift)
+
+        label = ctypes.create_string_buffer(
+            data[block + SSrfTex[0]:]).value.decode()
+        if SSrfTex[1]:
+            label += "___" + ctypes.create_string_buffer(
+                data[block + SSrfTex[1]:]).value.decode()
+
+        # make new texture with random colors
+        col = colorsys.hls_to_rgb(random.random(), 0.6, 0.8)
+        mat = bpy.data.materials.new(name=label)
+        mat.diffuse_color = (col[0], col[1], col[2], 1.0)
+        bl_object.data.materials.append(mat)
+
+        shift += 8
+
+    # read triangles
+    shift = block + SSrfFile[3]
+    for i in range(SSrfFile[2]):
+
+        # unsigned short uvIndex[3]; // UV texture coordinate indices used
+        # unsigned char texIndex; // surface texture index
+        # unsigned char reserved; // reserved for future use, must be zero
+        # unsigned long flags; // SRFTF_ triangle flags
+        # unsigned char smoothGroup; // light smoothing group
+        # unsigned char alphaLevel; // transparent/modulated alpha level
+        # unsigned char glazeTexIndex; // second-pass glaze texture index if used
+        # unsigned char glazeFunc; // ESrfGlaze second-pass glaze function
+        SSrfTri = struct.unpack_from("HHHBBIBBBB", data, shift)
+
+        # set UVs
+        uv0 = struct.unpack_from(
+            "ff", data, block + SSrfFile[5] + SSrfTri[0] * 8)
+        uv1 = struct.unpack_from(
+            "ff", data, block + SSrfFile[5] + SSrfTri[1] * 8)
+        uv2 = struct.unpack_from(
+            "ff", data, block + SSrfFile[5] + SSrfTri[2] * 8)
+        bm.faces[i].loops[0][uv].uv = (uv0[0], uv0[1])
+        bm.faces[i].loops[1][uv].uv = (uv1[0], uv1[1])
+        bm.faces[i].loops[2][uv].uv = (uv2[0], uv2[1])
+
+        # set material index
+        bm.faces[i].material_index = SSrfTri[3]
+
+        # TODO flags
+        # SRFTF_INACTIVE    = 0x00000001, // triangle is not active
+        # SRFTF_HIDDEN      = 0x00000002, // present but invisible
+        # SRFTF_VNIGNORE    = 0x00000004, // ignored in vertex normal calculations
+        # SRFTF_TRANSPARENT = 0x00000008, // transparent rendering is enabled
+        # SRFTF_UNLIT       = 0x00000020, // not affected by dynamic lighting
+        # SRFTF_TWOSIDED    = 0x00000040, // visible from both sides
+        # SRFTF_MASKING     = 0x00000080, // color key masking is active
+        # SRFTF_MODULATED   = 0x00000100, // modulated rendering is enabled
+        # SRFTF_ENVMAP      = 0x00000200, // environment mapped
+        # SRFTF_NONCOLLIDE  = 0x00000400, // traceray won't collide with this surface
+        # SRFTF_TEXBLEND    = 0x00000800,
+        # SRFTF_ZLATER      = 0x00001000,
+        # SRFTF_RESERVED    = 0x00010000
+
+        shift += 16
+
+    # update object mesh
+    bm.to_mesh(bl_object.data)
+    bm.free()
 
 
 # ----------------------------------------------------------------------------

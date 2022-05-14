@@ -73,60 +73,80 @@ def load(context, filepath):
         bl_object = None
         has_surface_already = False
 
-        # skip file header
-        idx = 12
+        # chunks order workaround
+        # loop 0: MAC
+        # loop 1: GEO
+        # loop 2: SRF
+        # loop 3: rest
+        for loop in range(4):
 
-        # loop over all chunks
-        while idx < len(data):
+            # skip file header
+            idx = 12
 
-            # unsigned long magic; // chunk-specific magic marker
-            # unsigned long lenFile; // length of chunk following this value
-            # unsigned long version; // chunk-specific format version
-            # unsigned long timeStamp; // time stamp of chunk creation
-            # unsigned long ofsName; // offset of chunk name string from start of chunk
-            #                        // If this value is zero, the chunk is nameless
-            SCpjChunkHeader = struct.unpack_from("IIIII", data, idx)
+            # loop over all chunks
+            while idx < len(data):
 
-            # decode chunk type
-            magic = data[idx:idx + 4].decode()
-            version = SCpjChunkHeader[2]
+                # unsigned long magic; // chunk-specific magic marker
+                # unsigned long lenFile; // length of chunk following this value
+                # unsigned long version; // chunk-specific format version
+                # unsigned long timeStamp; // time stamp of chunk creation
+                # unsigned long ofsName; // offset of chunk name string from start of chunk
+                #                        // If this value is zero, the chunk is nameless
+                SCpjChunkHeader = struct.unpack_from("IIIII", data, idx)
 
-            if SCpjChunkHeader[4] > 0:
-                name = ctypes.create_string_buffer(
-                    data[idx + SCpjChunkHeader[4]:]).value.decode()
-            else:
-                name = "nameless"
+                # decode chunk type
+                magic = data[idx:idx + 4].decode()
+                version = SCpjChunkHeader[2]
 
-            # delegate
-            if magic == CPJ_MAC_MAGIC and version == CPJ_MAC_VERSION:
-                chunk_mac(data, idx, name)
-            elif magic == CPJ_GEO_MAGIC and version == CPJ_GEO_VERSION:
-                if bl_object:
-                    print("! multiple GEO blocks are not supported")
+                if SCpjChunkHeader[4] > 0:
+                    name = ctypes.create_string_buffer(
+                        data[idx + SCpjChunkHeader[4]:]).value.decode()
                 else:
-                    bl_object = chunk_geo(data, idx, name)
-            elif magic == CPJ_SRF_MAGIC and version == CPJ_SRF_VERSION:
-                if has_surface_already:
-                    print("! multiple SRF blocks are not supported")
-                elif not bl_object:
-                    print("! cannot import SRF without GEO")
-                else:
-                    chunk_srf(data, idx, name, bl_object)
-                    has_surface_already = True
-            elif magic == CPJ_LOD_MAGIC and version == CPJ_LOD_VERSION:
-                chunk_lod(data, idx, name)
-            elif magic == CPJ_SKL_MAGIC and version == CPJ_SKL_VERSION:
-                chunk_skl(data, idx, name)
-            elif magic == CPJ_FRM_MAGIC and version == CPJ_FRM_VERSION:
-                chunk_frm(data, idx, name)
-            elif magic == CPJ_SEQ_MAGIC and version == CPJ_SEQ_VERSION:
-                chunk_seq(data, idx, name)
-            else:
-                raise ImportError("Unsupported %s v%d chunk" %
-                                  (magic, version))
+                    name = "nameless"
 
-            # seek to next chunk (16 bit aligned)
-            idx += SCpjChunkHeader[1] + (SCpjChunkHeader[1] % 2) + 8
+                # delegate
+                if loop == 0:
+                    if magic == CPJ_MAC_MAGIC and version == CPJ_MAC_VERSION:
+                        chunk_mac(data, idx, name)
+
+                elif loop == 1:
+                    if magic == CPJ_GEO_MAGIC and version == CPJ_GEO_VERSION:
+                        if bl_object:
+                            print("! multiple GEO blocks are not supported")
+                        else:
+                            bl_object = chunk_geo(data, idx, name)
+
+                elif loop == 2:
+                    if magic == CPJ_SRF_MAGIC and version == CPJ_SRF_VERSION:
+                        if has_surface_already:
+                            print("! multiple SRF blocks are not supported")
+                        elif not bl_object:
+                            print("! cannot import SRF without GEO")
+                        else:
+                            chunk_srf(data, idx, name, bl_object)
+                            has_surface_already = True
+
+                else:
+                    if magic == CPJ_MAC_MAGIC and version == CPJ_MAC_VERSION:
+                        pass
+                    elif magic == CPJ_GEO_MAGIC and version == CPJ_GEO_VERSION:
+                        pass
+                    elif magic == CPJ_SRF_MAGIC and version == CPJ_SRF_VERSION:
+                        pass
+                    elif magic == CPJ_LOD_MAGIC and version == CPJ_LOD_VERSION:
+                        chunk_lod(data, idx, name)
+                    elif magic == CPJ_SKL_MAGIC and version == CPJ_SKL_VERSION:
+                        chunk_skl(data, idx, name)
+                    elif magic == CPJ_FRM_MAGIC and version == CPJ_FRM_VERSION:
+                        chunk_frm(data, idx, name)
+                    elif magic == CPJ_SEQ_MAGIC and version == CPJ_SEQ_VERSION:
+                        chunk_seq(data, idx, name)
+                    else:
+                        raise ImportError("Unsupported %s v%d chunk" %
+                                          (magic, version))
+
+                # seek to next chunk (16 bit aligned)
+                idx += SCpjChunkHeader[1] + (SCpjChunkHeader[1] % 2) + 8
 
     return {'FINISHED'}
 
@@ -341,9 +361,9 @@ def chunk_srf(data, idx, name, bl_object):
             "ff", data, block + SSrfFile[5] + SSrfTri[1] * 8)
         uv2 = struct.unpack_from(
             "ff", data, block + SSrfFile[5] + SSrfTri[2] * 8)
-        bm.faces[i].loops[0][uv].uv = (uv0[0], uv0[1])
-        bm.faces[i].loops[1][uv].uv = (uv1[0], uv1[1])
-        bm.faces[i].loops[2][uv].uv = (uv2[0], uv2[1])
+        bm.faces[i].loops[0][uv].uv = (uv0[0], 1.0 - uv0[1])
+        bm.faces[i].loops[1][uv].uv = (uv1[0], 1.0 - uv1[1])
+        bm.faces[i].loops[2][uv].uv = (uv2[0], 1.0 - uv2[1])
 
         # set material index
         bm.faces[i].material_index = SSrfTri[3]
